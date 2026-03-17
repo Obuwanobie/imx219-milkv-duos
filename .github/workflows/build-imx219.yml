@@ -1,0 +1,54 @@
+name: Build IMX219 for Milk-V Duo S
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y gcc-aarch64-linux-gnu make bc libssl-dev flex bison libelf-dev
+
+      - name: Clone kernel source (sparse)
+        run: |
+          git clone --depth=1 --filter=blob:none --sparse             https://github.com/milkv-duo/duo-buildroot-sdk-v2.git kernel-src
+          cd kernel-src
+          git sparse-checkout set linux_5.10
+
+      - name: Configure kernel
+        working-directory: kernel-src/linux_5.10
+        run: |
+          make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- defconfig
+          # Match the running kernel: 5.10.4-tag-
+          ./scripts/config --set-str CONFIG_LOCALVERSION "-tag-"
+          ./scripts/config -e CONFIG_SMP
+          ./scripts/config -e CONFIG_PREEMPT
+          ./scripts/config -e CONFIG_MODULE_UNLOAD
+          ./scripts/config -e CONFIG_MEDIA_SUPPORT
+          ./scripts/config -e CONFIG_MEDIA_CAMERA_SUPPORT
+          ./scripts/config -e CONFIG_VIDEO_V4L2_SUBDEV_API
+          ./scripts/config -m CONFIG_VIDEO_IMX219
+          make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- olddefconfig
+
+      - name: Prepare kernel build
+        working-directory: kernel-src/linux_5.10
+        run: make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- modules_prepare
+        timeout-minutes: 20
+
+      - name: Build IMX219 module
+        working-directory: kernel-src/linux_5.10
+        run: |
+          make ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu-             M=drivers/media/i2c modules 2>&1 | tail -20
+          ls -lh drivers/media/i2c/imx219.ko
+
+      - name: Upload imx219.ko
+        uses: actions/upload-artifact@v4
+        with:
+          name: imx219-milkv-duos
+          path: kernel-src/linux_5.10/drivers/media/i2c/imx219.ko
+          if-no-files-found: error
